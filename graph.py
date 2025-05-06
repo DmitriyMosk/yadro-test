@@ -12,7 +12,7 @@ plt.plot(qpsk_data['sigma'], qpsk_data['ber'], label='QPSK', color='blue')
 plt.plot(qam16_data['sigma'], qam16_data['ber'], label='QAM16', color='orange')
 plt.plot(qam64_data['sigma'], qam64_data['ber'], label='QAM64', color='green')
 
-plt.xlabel('Sigma (Noise Level)')
+plt.xlabel('sigma')
 plt.ylabel('Bit Error Rate (BER)')
 plt.title('BER vs Noise Level for QPSK, QAM16, and QAM64')
 plt.grid(True, which='both', linestyle='--', linewidth=0.5)
