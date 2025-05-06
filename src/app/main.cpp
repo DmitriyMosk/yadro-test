@@ -4,6 +4,9 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #include "phys/qam/mapper.hpp"
 #include "phys/qam/qam_demodulator.hpp"
@@ -14,30 +17,24 @@
 
 #define SYMBOL_DTYPE float
 
-/**
- * @brief Генерирует случайный вектор байтов заданной длины
- * @param length Длина вектора в байтах
- * @return Вектор случайных байтов
- */
+// Mutex for thread-safe console output
+std::mutex cout_mutex;
+
 std::vector<byte> generate_random_bytes(size_t length) {
     static std::mt19937 rng(static_cast<unsigned int>(std::time(nullptr)));
-    std::uniform_int_distribution<unsigned int> dist(0, 255);
+    std::uniform_int_distribution<uint8_t> dist(0, 255);
     
     std::vector<byte> random_bytes(length);
     
     for (size_t i = 0; i < length; ++i) {
-        random_bytes[i] = static_cast<byte>(dist(rng));
+        random_bytes[i] = dist(rng);
     }
     
     return random_bytes;
 }
 
-/**
- * @brief Подсчитывает количество ошибок в битах между двумя векторами
- * @param bits1 Первый вектор байтов
- * @param bits2 Второй вектор байтов
- * @return Количество ошибок в битах
- */
+
+// i love xor
 size_t count_bit_errors(const std::vector<byte>& bits1, const std::vector<byte>& bits2) {
     size_t errors = 0;
     size_t min_size = std::min(bits1.size(), bits2.size());
@@ -54,107 +51,124 @@ size_t count_bit_errors(const std::vector<byte>& bits1, const std::vector<byte>&
     return errors;
 }
 
+void process_modulation(int modulation_index, double sigma_start, double sigma_end, double sigma_step, 
+                        int iterations, const std::string& filename) {
+    std::string modulation_name;
+    int test_sequence_len;
+    
+    if (modulation_index == 0) {
+        modulation_name = "QPSK";
+        test_sequence_len = 64;
+    } else if (modulation_index == 1) {
+        modulation_name = "QAM16";
+        test_sequence_len = 64;
+    } else {
+        modulation_name = "QAM64";
+        test_sequence_len = 64;
+    }
+    
+    //?????
+    {
+        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::cout << "Starting testing for " << modulation_name << std::endl;
+    }
+    
+    std::shared_ptr<mapper_base> mapper;
+    if (modulation_index == 0) {
+        mapper = qam_mapper<SYMBOL_DTYPE, qam_order::QPSK>::make();
+    } else if (modulation_index == 1) {
+        mapper = qam_mapper<SYMBOL_DTYPE, qam_order::QAM16>::make();
+    } else {
+        mapper = qam_mapper<SYMBOL_DTYPE, qam_order::QAM64>::make();
+    }
+    
+    
+    auto modulator = qam_modulator<SYMBOL_DTYPE>::make();
+    auto demodulator = qam_demodulator<SYMBOL_DTYPE>::make();
+    
+    modulator->set_mapper(mapper);
+    demodulator->set_mapper(mapper);
+    
+    csv_writer writer;
+    writer.set_file_name(filename);
+    writer.set_headers("sigma,ber");
+    
+    for (double sigma_iter = sigma_start; sigma_iter < sigma_end; sigma_iter += sigma_step) {
+        double result_ber = 0.0; 
+        size_t total_errors = 0;
+        size_t total_bits = 0;
+        
+        channel<SYMBOL_DTYPE> chan(sigma_iter);
+        
+        // Monte-Carlo iterations
+        for (int iter = 0; iter < iterations; ++iter) {
+            std::vector<byte> test_sequence = generate_random_bytes(test_sequence_len);
+            
+            complex<SYMBOL_DTYPE> modulated_symbols = modulator->modulate(test_sequence);
+            
+            complex<SYMBOL_DTYPE> noisy_symbols = chan.transmit(modulated_symbols);
+            
+            std::vector<byte> demodulated_bits = demodulator->demodulate(noisy_symbols);
+            
+            size_t errors = count_bit_errors(test_sequence, demodulated_bits);
+            total_errors += errors;
+            total_bits += test_sequence_len * 8;
+        }
+        
+        result_ber = static_cast<double>(total_errors) / total_bits;
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << sigma_iter << ","
+            << std::fixed << std::setprecision(15) << result_ber;
+        
+        writer.push_data(oss.str());
+        
+        {
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << modulation_name << " - Sigma: " << std::fixed << std::setprecision(2) << sigma_iter 
+                      << ", BER: " << std::fixed << std::setprecision(15) << result_ber << std::endl;
+        }
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(cout_mutex);
+        std::cout << "Completed testing " << modulation_name << std::endl;
+        std::cout << "Results saved to " << filename << std::endl;
+        std::cout << "-----------------------------------" << std::endl;
+    }
+}
+
 int main(int argc, char* argv[]) { 
     /**
      * SIM Settings
      */
     // {sigma_start, sigma_end, sigma_step}
-    const std::tuple<double,double,double> sigma = {0, 10, 0.02};
+    const std::tuple<double,double,double> sigma = {0, 10, 0.05};
 
     // modulations filename
-    const char* fnames[] = {
+    const std::string fnames[] = {
         "ber_sigma_qpsk.csv",
         "ber_sigma_qam16.csv",
         "ber_sigma_qam64.csv"
     };
 
-    // monter-carlo iterations
+    // monte-carlo iterations
     const int iterations_per_modulations = 100000;
     
-    auto qpsk_mapper            = qam_mapper<SYMBOL_DTYPE, qam_order::QPSK>::make();
-    auto qam16_mapper           = qam_mapper<SYMBOL_DTYPE, qam_order::QAM16>::make();
-    auto qam64_mapper           = qam_mapper<SYMBOL_DTYPE, qam_order::QAM64>::make();
-
-    auto qpsk_modulator         = qam_modulator<SYMBOL_DTYPE>::make();
-    auto qam16_modulator        = qam_modulator<SYMBOL_DTYPE>::make();
-    auto qam64_modulator        = qam_modulator<SYMBOL_DTYPE>::make();
-
-    auto qpsk_demodulator       = qam_demodulator<SYMBOL_DTYPE>::make();
-    auto qam16_demodulator      = qam_demodulator<SYMBOL_DTYPE>::make();
-    auto qam64_demodulator      = qam_demodulator<SYMBOL_DTYPE>::make();
-
-    qpsk_modulator->set_mapper(qpsk_mapper);
-    qam16_modulator->set_mapper(qam16_mapper);
-    qam64_modulator->set_mapper(qam64_mapper);
+    // Create threads for each modulation type
+    std::vector<std::thread> threads;
     
-    qpsk_demodulator->set_mapper(qpsk_mapper);
-    qam16_demodulator->set_mapper(qam16_mapper);
-    qam64_demodulator->set_mapper(qam64_mapper);
-    
-    csv_writer writer;
-
-    // i = 0 (QPSK)
-    // i = 1 (QAM16)
-    // i = 2 (QAM64)
-    for (int i = 0; i < 3; ++i) { 
-        writer.set_file_name(fnames[i]);
-        writer.set_headers("sigma,ber");
-
-        int test_sequence_len = (i == 0 || i == 1) ? 64 : 128;
-        
-        std::cout << "Testing " << (i == 0 ? "QPSK" : (i == 1 ? "QAM16" : "QAM64")) << std::endl;
-        
-        for (double sigma_iter = std::get<0>(sigma); sigma_iter < std::get<1>(sigma); sigma_iter += std::get<2>(sigma)) { 
-            double result_ber = 0.0; 
-            size_t total_errors = 0;
-            size_t total_bits = 0;
-            
-            channel<SYMBOL_DTYPE> chan(sigma_iter);
-
-            for (int iter = 0; iter < iterations_per_modulations; ++iter) {
-                std::vector<byte> test_sequence = generate_random_bytes(test_sequence_len);
-                
-                complex<SYMBOL_DTYPE> modulated_symbols;
-                if (i == 0) {
-                    modulated_symbols = qpsk_modulator->modulate(test_sequence);
-                } else if (i == 1) {
-                    modulated_symbols = qam16_modulator->modulate(test_sequence);
-                } else {
-                    modulated_symbols = qam64_modulator->modulate(test_sequence);
-                }
-
-                complex<SYMBOL_DTYPE> noisy_symbols = chan.transmit(modulated_symbols);
-                
-                std::vector<byte> demodulated_bits;
-                if (i == 0) {
-                    demodulated_bits = qpsk_demodulator->demodulate(noisy_symbols);
-                } else if (i == 1) {
-                    demodulated_bits = qam16_demodulator->demodulate(noisy_symbols);
-                } else {
-                    demodulated_bits = qam64_demodulator->demodulate(noisy_symbols);
-                }
-                
-                size_t errors = count_bit_errors(test_sequence, demodulated_bits);
-                total_errors += errors;
-                total_bits += test_sequence_len * 8;
-            }
-            
-            result_ber = static_cast<double>(total_errors) / total_bits;
-            
-            std::ostringstream oss;
-            oss << std::fixed << std::setprecision(2) << sigma_iter << ","
-                << std::fixed << std::setprecision(15) << result_ber;
-            
-            writer.push_data(oss.str());
-            
-            std::cout << "Sigma: " << std::fixed << std::setprecision(2) << sigma_iter 
-                      << ", BER: " << std::fixed << std::setprecision(15) << result_ber << std::endl;
-        }
-        
-        std::cout << "Completed testing " << (i == 0 ? "QPSK" : (i == 1 ? "QAM16" : "QAM64")) << std::endl;
-        std::cout << "Results saved to " << fnames[i] << std::endl;
-        std::cout << "-----------------------------------" << std::endl;
+    for (int i = 0; i < 3; ++i) {
+        threads.emplace_back(process_modulation, i, 
+                             std::get<0>(sigma), std::get<1>(sigma), std::get<2>(sigma),
+                             iterations_per_modulations, fnames[i]);
     }
-
+    
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    
+    std::cout << "All modulation tests completed successfully!" << std::endl;
+    
     return EXIT_SUCCESS;
 }
