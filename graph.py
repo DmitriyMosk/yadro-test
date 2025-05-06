@@ -6,16 +6,12 @@ qpsk_data = pd.read_csv('./build/ber_sigma_qpsk.csv', dtype='float64')
 qam16_data = pd.read_csv('./build/ber_sigma_qam16.csv', dtype='float64')
 qam64_data = pd.read_csv('./build/ber_sigma_qam64.csv', dtype='float64')
 
-# Создание графика
 plt.figure(figsize=(10, 6))
 
-# Построение кривых
 plt.plot(qpsk_data['sigma'], qpsk_data['ber'], label='QPSK', color='blue')
 plt.plot(qam16_data['sigma'], qam16_data['ber'], label='QAM16', color='orange')
 plt.plot(qam64_data['sigma'], qam64_data['ber'], label='QAM64', color='green')
 
-# Настройка графика
-plt.yscale('log')  # Логарифмическая шкала для оси Y
 plt.xlabel('Sigma (Noise Level)')
 plt.ylabel('Bit Error Rate (BER)')
 plt.title('BER vs Noise Level for QPSK, QAM16, and QAM64')
@@ -23,8 +19,6 @@ plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.legend()
 plt.tight_layout()
 
-# Сохранение графика
 plt.savefig('ber_comparison.png', dpi=300)
 
-# Отображение графика
 plt.show()
