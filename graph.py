@@ -9,8 +9,8 @@ qam64_data = pd.read_csv('./build/ber_sigma_qam64.csv', dtype='float64')
 plt.figure(figsize=(10, 6))
 
 plt.plot(qpsk_data['sigma'], qpsk_data['ber'], label='QPSK', color='blue')
-plt.plot(qam16_data['sigma'], qam16_data['ber'], label='QAM16', color='orange')
-plt.plot(qam64_data['sigma'], qam64_data['ber'], label='QAM64', color='green')
+plt.plot(qam64_data['sigma'], qam64_data['ber'], label='QAM16', color='green')
+plt.plot(qam16_data['sigma'], qam16_data['ber'], label='QAM64', color='orange')
 
 plt.xlabel('sigma')
 plt.ylabel('Bit Error Rate (BER)')
